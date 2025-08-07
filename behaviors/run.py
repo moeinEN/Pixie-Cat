@@ -4,8 +4,9 @@ from behaviors.base import Behavior
 class Run(Behavior):
     asset         = "assets/run.gif"
     step          = 8
-    move_interval = 16
+    move_interval = 24
     fps           = 24
+    step_limit    = 3000
 
     def __init__(self, width, height):
         super().__init__(width, height)

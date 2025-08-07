@@ -19,15 +19,11 @@ class BehaviorManager:
     def update(self, x, y):
         nx, ny, facing = self.current.update(x, y)
 
-        from behaviors.walk import Walk
-        if isinstance(self.current, Walk):
-            if self.current.steps >= self.current.step_limit:
-                self.switch("sit")
+        if isinstance(self.current, Walk) and self.current.steps >= self.current.step_limit:
+            self.switch("sit")
 
-        from behaviors.sit import Sit
-        if isinstance(self.current, Sit) and self._sit_timer is None:
-            delay = random.uniform(7, 15) * 1000
-            self._sit_timer = GLib.timeout_add(int(delay), self._on_sit_timeout)
+        if isinstance(self.current, Run) and self.current.steps >= self.current.step_limit:
+            self.switch("walk")
 
         return nx, ny, facing
     
@@ -45,7 +41,7 @@ class BehaviorManager:
         self.current.start()
 
     def _on_sit_timeout(self):
-        self.switch("run")
+        self.switch("walk")
         return False
 
     def mode(self):

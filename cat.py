@@ -6,17 +6,16 @@ if lib:
 
 gi.require_version("Gtk4LayerShell", "1.0")
 gi.require_version("Gtk",        "4.0")
-from gi.repository import (
-    Gtk4LayerShell as ls,
-    Gtk, Gdk, GLib
-)
+from gi.repository import Gtk4LayerShell as ls, Gtk, Gdk, GLib
 
 from sprite             import AnimatedSprite
 from behavior_manager   import BehaviorManager
 
 css = Gtk.CssProvider()
 css.load_from_data(b"""
-.transparent { background: transparent; }
+.transparent {
+    background: transparent;
+}
 """)
 Gtk.StyleContext.add_provider_for_display(
     Gdk.Display.get_default(),
@@ -34,13 +33,15 @@ class CatWindow(Gtk.ApplicationWindow):
         ls.init_for_window(self)
         ls.set_layer(self, ls.Layer.OVERLAY)
         ls.set_keyboard_mode(self, ls.KeyboardMode.NONE)
-        for e in (ls.Edge.TOP, ls.Edge.LEFT):
-            ls.set_anchor(self, e, True)
-            ls.set_margin(self, e, 0)
+        for edge in (ls.Edge.TOP, ls.Edge.LEFT):
+            ls.set_anchor(self, edge, True)
+            ls.set_margin(self, edge, 0)
 
         disp     = Gdk.Display.get_default()
         monitors = disp.get_monitors()
-        geom     = monitors[0].get_geometry()
+        if not monitors:
+            raise SystemExit("No monitors found!")
+        geom = monitors[0].get_geometry()
 
         self.bm = BehaviorManager(geom.width, geom.height)
 
@@ -48,17 +49,18 @@ class CatWindow(Gtk.ApplicationWindow):
         self.pos_y  = geom.height / 2
         self.facing = 1
         self._mode  = None
+
         self._load_behavior()
 
         click = Gtk.GestureClick.new()
-        click.set_button(0)
+        click.set_button(1)
         click.connect("pressed", self._on_click)
-        self.picture.add_controller(click)
+        self.add_controller(click)
 
     def _load_behavior(self):
-        for attr in ("_move_id", "_refresh_id"):
-            if hasattr(self, attr):
-                GLib.source_remove(getattr(self, attr))
+        for name in ("_move_id", "_refresh_id"):
+            if hasattr(self, name):
+                GLib.source_remove(getattr(self, name))
 
         asset    = self.bm.get_asset()
         fps      = self.bm.get_fps()
@@ -69,11 +71,16 @@ class CatWindow(Gtk.ApplicationWindow):
         self.set_child(pic)
         self.picture = pic
 
+        w = self.sprite.get_pixbuf().get_width()
+        h = self.sprite.get_pixbuf().get_height()
+        self.set_default_size(w, h)
+        self.picture.set_size_request(w, h)
+
         self._refresh_id = GLib.timeout_add(int(1000/fps), self._refresh)
         self._move_id    = GLib.timeout_add(interval,       self._move)
         self._mode       = self.bm.mode()
 
-    def _refresh(self, *args):
+    def _refresh(self):
         pix = self.sprite.get_pixbuf()
         if self.facing < 0:
             pix = pix.flip(True)
@@ -81,7 +88,7 @@ class CatWindow(Gtk.ApplicationWindow):
         self.picture.set_paintable(tex)
         return True
 
-    def _move(self, *args):
+    def _move(self):
         nx, ny, facing = self.bm.update(self.pos_x, self.pos_y)
         self.pos_x, self.pos_y = nx, ny
         self.facing          = facing
@@ -97,8 +104,9 @@ class CatWindow(Gtk.ApplicationWindow):
         return True
 
     def _on_click(self, gesture, n_press, x, y):
-        self.bm.switch("run")
-        self._load_behavior()
+        if self.bm.mode() != "run":
+            self.bm.switch("run")
+            self._load_behavior()
 
 def on_activate(app):
     if not hasattr(app, "win"):
