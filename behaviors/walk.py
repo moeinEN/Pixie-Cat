@@ -2,7 +2,7 @@ import random, math
 from behaviors.base import Behavior
 
 class Walk(Behavior):
-    asset          = "assets/walk-crop.gif"
+    asset          = "assets/walk.gif"
     step           = 4
     move_interval  = 32
     fps            = 12
