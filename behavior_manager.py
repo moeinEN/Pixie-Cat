@@ -8,6 +8,7 @@ from behaviors.sit    import Sit
 from behaviors.run    import Run
 from behaviors.idle   import Idle
 from behaviors.attack import Attack
+from behaviors.happy  import Happy
 
 class BehaviorManager:
     def __init__(self, width: int, height: int):
@@ -17,6 +18,7 @@ class BehaviorManager:
             "run":    Run(width, height),
             "idle":   Idle(width, height),
             "attack": Attack(width, height),
+            "happy":  Happy(width, height),
         }
         self.current   = self._behaviors["walk"]
         self.current.start()
