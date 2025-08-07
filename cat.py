@@ -1,22 +1,28 @@
-import os, math, ctypes, ctypes.util, gi
+import os, ctypes, ctypes.util, gi
+
 lib = ctypes.util.find_library("gtk4-layer-shell")
 if lib:
     ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
 
 gi.require_version("Gtk4LayerShell", "1.0")
-gi.require_version("Gtk", "4.0")
-from gi.repository import Gtk4LayerShell as ls, Gtk, Gdk, GLib
-from sprite import AnimatedSprite
+gi.require_version("Gtk",        "4.0")
+from gi.repository import (
+    Gtk4LayerShell as ls,
+    Gtk, Gdk, GLib
+)
 
-ASSET   = os.path.abspath("assets/walk-crop.gif")
-STEP    = 12
-MOVE_MS = 16
+from sprite             import AnimatedSprite
+from behavior_manager   import BehaviorManager
 
 css = Gtk.CssProvider()
-css.load_from_data(b".transparent { background: transparent; }")
+css.load_from_data(b"""
+.transparent { background: transparent; }
+""")
 Gtk.StyleContext.add_provider_for_display(
-    Gdk.Display.get_default(), css,
-    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    Gdk.Display.get_default(),
+    css,
+    Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+)
 
 class CatWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
@@ -32,54 +38,73 @@ class CatWindow(Gtk.ApplicationWindow):
             ls.set_anchor(self, e, True)
             ls.set_margin(self, e, 0)
 
-        if not os.path.exists(ASSET):
-            raise SystemExit(f"asset not found: {ASSET}")
-        self.sprite   = AnimatedSprite(ASSET, fps=12)
-        self.picture  = Gtk.Picture.new_for_paintable(self.sprite.get_paintable())
-        self.set_child(self.picture)
+        disp     = Gdk.Display.get_default()
+        monitors = disp.get_monitors()
+        geom     = monitors[0].get_geometry()
 
-        GLib.timeout_add(int(1000/60), self._refresh)
-        GLib.timeout_add(MOVE_MS,       self._move)
+        self.bm = BehaviorManager(geom.width, geom.height)
 
-        self.pos_x = self.pos_y = 0
+        self.pos_x  = geom.width  / 2
+        self.pos_y  = geom.height / 2
+        self.facing = 1
+        self._mode  = None
+        self._load_behavior()
 
-    def _refresh(self):
-        self.picture.set_paintable(self.sprite.get_paintable())
+        click = Gtk.GestureClick.new()
+        click.set_button(0)
+        click.connect("pressed", self._on_click)
+        self.picture.add_controller(click)
+
+    def _load_behavior(self):
+        for attr in ("_move_id", "_refresh_id"):
+            if hasattr(self, attr):
+                GLib.source_remove(getattr(self, attr))
+
+        asset    = self.bm.get_asset()
+        fps      = self.bm.get_fps()
+        interval = self.bm.get_move_interval()
+
+        self.sprite = AnimatedSprite(asset, fps=fps)
+        pic = Gtk.Picture.new_for_paintable(self.sprite.get_paintable())
+        self.set_child(pic)
+        self.picture = pic
+
+        self._refresh_id = GLib.timeout_add(int(1000/fps), self._refresh)
+        self._move_id    = GLib.timeout_add(interval,       self._move)
+        self._mode       = self.bm.mode()
+
+    def _refresh(self, *args):
+        pix = self.sprite.get_pixbuf()
+        if self.facing < 0:
+            pix = pix.flip(True)
+        tex = Gdk.Texture.new_for_pixbuf(pix)
+        self.picture.set_paintable(tex)
         return True
 
-    def _move(self):
-        seat    = self.get_display().get_default_seat()
-        pointer = seat.get_pointer()
-        surface, sx, sy = pointer.get_surface_at_position()
-        if surface is None:
-            return True
+    def _move(self, *args):
+        nx, ny, facing = self.bm.update(self.pos_x, self.pos_y)
+        self.pos_x, self.pos_y = nx, ny
+        self.facing          = facing
 
-        if hasattr(surface, "get_position"):
-            ox, oy = surface.get_position()
-        elif hasattr(surface, "get_origin"):
-            ox, oy = surface.get_origin()
-        else:
-            ox, oy = 0, 0
-        px, py = ox + sx, oy + sy
+        ls.set_margin(self, ls.Edge.LEFT, int(nx))
+        ls.set_margin(self, ls.Edge.TOP,  int(ny))
+        self.queue_resize()
 
-        w, h = self.get_width() or 1, self.get_height() or 1
-        tx, ty = px - w/2, py - h/2
-        dx, dy = tx - self.pos_x, ty - self.pos_y
-        dist   = math.hypot(dx, dy)
+        if self.bm.mode() != self._mode:
+            self._load_behavior()
 
-        if dist > 1:
-            self.pos_x += dx/dist * STEP
-            self.pos_y += dy/dist * STEP
-            ls.set_margin(self, ls.Edge.LEFT, int(self.pos_x))
-            ls.set_margin(self, ls.Edge.TOP,  int(self.pos_y))
-            self.queue_resize()
+        print(f"mode={self.bm.mode():4s} steps={self.bm.get_steps():4d}", end="\r")
         return True
+
+    def _on_click(self, gesture, n_press, x, y):
+        self.bm.switch("run")
+        self._load_behavior()
 
 def on_activate(app):
-    if not hasattr(app, "cat_win"):
-        app.cat_win = CatWindow(app)
-    app.cat_win.present()
+    if not hasattr(app, "win"):
+        app.win = CatWindow(app)
+    app.win.present()
 
 app = Gtk.Application()
 app.connect("activate", on_activate)
-app.run()   
+app.run()

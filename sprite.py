@@ -7,41 +7,59 @@ class AnimatedSprite:
         self._is_gif = filename.lower().endswith(".gif")
 
         if self._is_gif:
+            # GIF path
             self._anim  = GdkPixbuf.PixbufAnimation.new_from_file(filename)
             self._iter  = self._anim.get_iter(None)
             self._paint = Gdk.Texture.new_for_pixbuf(self._iter.get_pixbuf())
             delay = max(self._iter.get_delay_time(), 16)
             self._tick  = GLib.timeout_add(delay, self._advance_gif)
         else:
-            sheet = GdkPixbuf.Pixbuf.new_from_file(filename)
-            h     = sheet.get_height()
-            cols  = sheet.get_width() // h
-            self._frames = [
-                Gdk.Texture.new_for_pixbuf(
-                    sheet.new_subpixbuf(i*h, 0, h, h))
+            # Sprite-sheet path
+            sheet   = GdkPixbuf.Pixbuf.new_from_file(filename)
+            size    = sheet.get_height()
+            cols    = sheet.get_width() // size
+            # keep raw pixbuf frames for flipping
+            self._pixframes = [
+                sheet.new_subpixbuf(i*size, 0, size, size)
                 for i in range(cols)
+            ]
+            # pre-build textures for speed
+            self._frames = [
+                Gdk.Texture.new_for_pixbuf(p)
+                for p in self._pixframes
             ]
             self._index = 0
             self._paint = self._frames[0]
             self._tick  = GLib.timeout_add(int(1000/fps), self._advance_sheet)
 
     def _advance_gif(self):
+        # advance iterator, rebuild texture
         self._iter.advance(None)
-        self._paint = Gdk.Texture.new_for_pixbuf(self._iter.get_pixbuf())
+        pix = self._iter.get_pixbuf()
+        self._paint = Gdk.Texture.new_for_pixbuf(pix)
         delay = max(self._iter.get_delay_time(), 16)
         GLib.source_remove(self._tick)
         self._tick = GLib.timeout_add(delay, self._advance_gif)
         return False
 
     def _advance_sheet(self):
+        # cycle through sheet frames
         self._index = (self._index + 1) % len(self._frames)
         self._paint = self._frames[self._index]
         return True
 
     def get_paintable(self):
+        # returns a Gdk.Paintable for direct use in Gtk.Picture
         return self._paint
 
+    def get_pixbuf(self):
+        # returns the raw GdkPixbuf.Pixbuf behind the current frame
+        if self._is_gif:
+            return self._iter.get_pixbuf()
+        else:
+            return self._pixframes[self._index]
+
     def stop(self):
-        if self._tick:
+        if hasattr(self, "_tick"):
             GLib.source_remove(self._tick)
-            self._tick = None
+            del self._tick
