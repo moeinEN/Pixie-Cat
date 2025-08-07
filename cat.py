@@ -93,27 +93,22 @@ class CatWindow(Gtk.ApplicationWindow):
             self._load_behavior()
 
     def _on_scroll(self, controller, dx, dy):
-        # ignore if dying or not a real vertical scroll
         if self._dying or abs(dy) < 0.1:
             return True
 
         if not self._is_happy:
-            # first scroll → start Happy
             self._start_happy()
         else:
-            # already happy → extend it
             self._extend_happy()
 
-        return True    # consume the event
+        return True
 
     def _start_happy(self):
         happy_beh = self.bm._behaviors["happy"]
-        # switch into Happy
         self.bm.switch("happy")
         self._load_behavior()
         self._is_happy = True
 
-        # (re)start the end‐timer
         if self._happy_timeout_id:
             GLib.source_remove(self._happy_timeout_id)
         self._happy_timeout_id = GLib.timeout_add(
@@ -122,10 +117,8 @@ class CatWindow(Gtk.ApplicationWindow):
         )
 
     def _extend_happy(self):
-        # cancel the old timeout
         if self._happy_timeout_id:
             GLib.source_remove(self._happy_timeout_id)
-        # schedule a fresh one
         happy_beh = self.bm._behaviors["happy"]
         self._happy_timeout_id = GLib.timeout_add(
             happy_beh.duration_ms,
@@ -133,13 +126,12 @@ class CatWindow(Gtk.ApplicationWindow):
         )
 
     def _end_happy(self):
-        # only switch back if we’re still in Happy
         if self.bm.mode() == "happy":
             self.bm.switch("walk")
             self._load_behavior()
         self._is_happy        = False
         self._happy_timeout_id = None
-        return False          # remove this timeout source
+        return False
     
     def _load_behavior(self):
         for tid in ("_move_id", "_refresh_id"):
@@ -190,24 +182,20 @@ class CatWindow(Gtk.ApplicationWindow):
             self._load_behavior()
 
     def _on_motion(self, controller, x, y):
-        # don’t do anything if we’re dying or already running
         mode = self.bm.mode()
         if self._dying or mode in ("run", "happy"):
             return
 
-        # get the picture’s size
         alloc_w = self.picture.get_allocated_width()
         alloc_h = self.picture.get_allocated_height()
         if alloc_w <= 0 or alloc_h <= 0:
             return
 
-        # compute pointer distance from the cat’s center
         cx, cy = alloc_w / 2, alloc_h / 2
         dx, dy = x - cx, y - cy
         dist   = math.hypot(dx, dy)
         mode   = self.bm.mode()
 
-        # if we’re not already attacking and pointer is close enough → attack
         if mode not in ("attack", "run") and dist <= ATTACK_THRESHOLD:
             if dx >= 15:
                 self.facing = 1
@@ -216,7 +204,6 @@ class CatWindow(Gtk.ApplicationWindow):
             self.bm.switch("attack")
             self._load_behavior()
 
-        # if we are attacking and pointer has moved away → resume walking
         elif mode == "attack" and dist > ATTACK_THRESHOLD:
             self.bm.switch("walk")
             self._load_behavior()

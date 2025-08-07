@@ -27,10 +27,6 @@ class BehaviorManager:
         self._idle_timer = None
 
     def update(self, x: float, y: float):
-        """
-        Advance the current behavior, handle its auto‐transitions,
-        and return (new_x, new_y, facing).
-        """
         res = self.current.update(x, y)
         if isinstance(self.current, Attack) and res is None:
             self.switch("walk")
@@ -69,10 +65,6 @@ class BehaviorManager:
         return False
 
     def switch(self, mode_name: str):
-        """
-        Switch to a different behavior, cancelling any pending sit/idle timers.
-        Attack→Walk is only triggered by the window’s proximity logic.
-        """
         if mode_name not in self._behaviors:
             return
         new = self._behaviors[mode_name]

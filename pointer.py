@@ -75,7 +75,6 @@ def _x11_backend() -> Optional[_POS_TYPE]:
 _backends = (_gtk_backend, _win_backend, _x11_backend)
 
 def get_mouse_position() -> Optional[_POS_TYPE]:
-    """Return current pointer coordinates or **None** if unavailable."""
     for backend in _backends:
         pos = backend()
         if pos is not None:
