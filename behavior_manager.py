@@ -3,33 +3,56 @@ import gi
 gi.require_version("GLib", "2.0")
 from gi.repository import GLib
 
-from behaviors.walk import Walk
-from behaviors.run  import Run
-from behaviors.sit  import Sit
+from behaviors.walk   import Walk
+from behaviors.sit    import Sit
+from behaviors.run    import Run
+from behaviors.idle   import Idle
+from behaviors.attack import Attack
 
 class BehaviorManager:
     def __init__(self, width: int, height: int):
         self._behaviors = {
-            "walk": Walk(width, height),
-            "sit":  Sit(width, height),
-            "run":  Run(width, height),
+            "walk":   Walk(width, height),
+            "sit":    Sit(width, height),
+            "run":    Run(width, height),
+            "idle":   Idle(width, height),
+            "attack": Attack(width, height),
         }
-        self.current    = self._behaviors["walk"]
+        self.current   = self._behaviors["walk"]
         self.current.start()
-        self._sit_timer = None
+
+        self._sit_timer  = None
+        self._idle_timer = None
 
     def update(self, x: float, y: float):
-        nx, ny, facing = self.current.update(x, y)
+        """
+        Advance the current behavior, handle its auto‐transitions,
+        and return (new_x, new_y, facing).
+        """
+        res = self.current.update(x, y)
+        if isinstance(self.current, Attack) and res is None:
+            self.switch("walk")
+            res = self.current.update(x, y)
+        nx, ny, facing = res
 
+        from behaviors.walk import Walk
         if isinstance(self.current, Walk) and self.current.steps >= self.current.step_limit:
             self.switch("sit")
 
+        from behaviors.run import Run
         if isinstance(self.current, Run) and self.current.steps >= self.current.step_limit:
             self.switch("walk")
 
+        from behaviors.sit import Sit
         if isinstance(self.current, Sit) and self._sit_timer is None:
             delay = int(random.uniform(7, 15) * 1000)
             self._sit_timer = GLib.timeout_add(delay, self._on_sit_timeout)
+
+        from behaviors.idle import Idle
+        if isinstance(self.current, Idle) is False and isinstance(self.current, Walk) and self._idle_timer is None:
+            if random.random() < 0.002:
+                self.switch("idle")
+                self._idle_timer = GLib.timeout_add(5000, self._on_idle_timeout)
 
         return nx, ny, facing
 
@@ -38,19 +61,36 @@ class BehaviorManager:
         self._sit_timer = None
         return False
 
+    def _on_idle_timeout(self):
+        self.switch("walk")
+        self._idle_timer = None
+        return False
+
     def switch(self, mode_name: str):
+        """
+        Switch to a different behavior, cancelling any pending sit/idle timers.
+        Attack→Walk is only triggered by the window’s proximity logic.
+        """
         if mode_name not in self._behaviors:
             return
-        if self.current is self._behaviors[mode_name]:
+        new = self._behaviors[mode_name]
+        if new is self.current:
             return
 
         if self._sit_timer:
             GLib.source_remove(self._sit_timer)
             self._sit_timer = None
+        if self._idle_timer:
+            GLib.source_remove(self._idle_timer)
+            self._idle_timer = None
 
         self.current.stop()
-        self.current = self._behaviors[mode_name]
-        self.current.start()
+
+        if mode_name == "attack":
+            self.current = new
+        else:
+            self.current = new
+            self.current.start()
 
     def mode(self) -> str:
         return type(self.current).__name__.lower()
