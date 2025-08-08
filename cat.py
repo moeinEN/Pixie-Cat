@@ -36,7 +36,7 @@ def parse_color(hexstr):
 
 class CatWindow(Gtk.ApplicationWindow):
     def __init__(self, app, speed, scale, color):
-        super().__init__(application=app, title="Wayland-Cat")
+        super().__init__(application=app, title="Pixie")
         self._app   = app
         self._dying = False
         self.total_steps = 0
