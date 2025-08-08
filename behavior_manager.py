@@ -11,16 +11,20 @@ from behaviors.attack import Attack
 from behaviors.happy  import Happy
 
 class BehaviorManager:
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int, height: int, scale: float = 1.0):
+        self.width  = width
+        self.height = height
+        self.scale  = float(scale) if scale else 1.0
+
         self._behaviors = {
             "walk":   Walk(width, height),
             "sit":    Sit(width, height),
             "run":    Run(width, height),
             "idle":   Idle(width, height),
-            "attack": Attack(width, height),
-            "happy":  Happy(width, height),
+            "attack": Attack(width, height, scale=self.scale),
+            "happy":  Happy(width, height, scale=self.scale),
         }
-        self.current   = self._behaviors["walk"]
+        self.current = self._behaviors["walk"]
         self.current.start()
 
         self._sit_timer  = None
@@ -72,13 +76,16 @@ class BehaviorManager:
             return
 
         if self._sit_timer:
-            GLib.source_remove(self._sit_timer)
-            self._sit_timer = None
+            GLib.source_remove(self._sit_timer); self._sit_timer = None
         if self._idle_timer:
-            GLib.source_remove(self._idle_timer)
-            self._idle_timer = None
+            GLib.source_remove(self._idle_timer); self._idle_timer = None
+        leaving_walk_for_soft = isinstance(self.current, Walk) and mode_name in ("idle", "attack", "happy")
+        if not leaving_walk_for_soft:
+            self.current.stop()
 
-        self.current.stop()
+        if mode_name == "walk" and isinstance(self.current, (Idle, Attack, Happy)):
+            self.current = new
+            return
 
         if mode_name == "attack":
             self.current = new

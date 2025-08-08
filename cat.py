@@ -39,6 +39,8 @@ class CatWindow(Gtk.ApplicationWindow):
         super().__init__(application=app, title="Wayland-Cat")
         self._app   = app
         self._dying = False
+        self.total_steps = 0
+        
 
         self.speed = max(0.01, speed)
         self.scale = max(0.01, scale)
@@ -59,7 +61,7 @@ class CatWindow(Gtk.ApplicationWindow):
         monitors = disp.get_monitors()
         geom     = monitors[0].get_geometry()
 
-        self.bm = BehaviorManager(geom.width, geom.height)
+        self.bm = BehaviorManager(geom.width, geom.height, scale=self.scale)
 
         self.pos_x   = geom.width/2
         self.pos_y   = geom.height/2
@@ -135,17 +137,25 @@ class CatWindow(Gtk.ApplicationWindow):
         return pixbuf
 
     def _load_behavior(self):
-        for tid in ("_move_id","_refresh_id"):
-            if hasattr(self,tid):
-                GLib.source_remove(getattr(self,tid))
+        for tid in ("_move_id", "_refresh_id"):
+            if hasattr(self, tid):
+                GLib.source_remove(getattr(self, tid))
 
         asset    = self.bm.get_asset()
         fps      = self.bm.get_fps()
-        interval = int(self.bm.get_move_interval()/self.speed)
+        interval = int(self.bm.get_move_interval() / self.speed)
 
-        self.sprite      = AnimatedSprite(asset, fps=fps)
-        self._refresh_id = GLib.timeout_add(int(1000/fps),    self._refresh)
-        self._move_id    = GLib.timeout_add(interval,          self._move)
+        self.sprite = AnimatedSprite(asset, fps=fps)
+        first = self.sprite.get_pixbuf()
+        first = self.tint_and_scale(first.copy())
+        if self.facing < 0:
+            first = first.flip(True)
+        sw, sh = first.get_width(), first.get_height()
+        self.set_default_size(sw, sh)
+        self.picture.set_size_request(sw, sh)
+        self.picture.set_paintable(Gdk.Texture.new_for_pixbuf(first))
+        self._refresh_id = GLib.timeout_add(int(1000 / fps), self._refresh)
+        self._move_id    = GLib.timeout_add(interval,        self._move)
         self._mode       = self.bm.mode()
 
     def _refresh(self):
@@ -158,16 +168,22 @@ class CatWindow(Gtk.ApplicationWindow):
         return True
 
     def _move(self):
+        prev_x, prev_y = self.pos_x, self.pos_y
         nx, ny, f = self.bm.update(self.pos_x, self.pos_y)
+        moved = math.hypot(nx - prev_x, ny - prev_y)
+        self.total_steps += int(moved)
         self.pos_x, self.pos_y = nx, ny
-        self.facing           = f
-
+        self.facing = f
         ls.set_margin(self, ls.Edge.LEFT, int(nx))
         ls.set_margin(self, ls.Edge.TOP,  int(ny))
         self.queue_resize()
-
-        if self.bm.mode()!=self._mode:
+        if self.bm.mode() != self._mode:
             self._load_behavior()
+        try:
+            print(f"mode={self.bm.mode():6s}  mode_steps={self.bm.get_steps():6d}  total_steps={self.total_steps:8d}", end="\r")
+        except Exception:
+            pass
+
         return True
 
     def _trigger_run(self):
@@ -183,21 +199,34 @@ class CatWindow(Gtk.ApplicationWindow):
         self._load_behavior()
 
     def _on_motion(self, controller, x, y):
-        if self._dying or self.bm.mode() in ("run","happy"):
+        if self._dying or self.bm.mode() in ("run", "happy"):
             return
-        w,h = self.picture.get_allocated_width(), self.picture.get_allocated_height()
-        if w<=0 or h<=0:
-            return
-        cx,cy = w/2,h/2
-        dx,dy = x-cx, y-cy
-        dist  = math.hypot(dx,dy)
-        mode  = self.bm.mode()
 
-        if mode not in ("attack","run","happy") and dist<=ATTACK_THRESHOLD:
-            self.facing = 1 if dx>=15 else -1
-            self.bm.switch("attack"); self._load_behavior()
-        elif mode=="attack" and dist>ATTACK_THRESHOLD:
-            self.bm.switch("walk"); self._load_behavior()
+        w = self.picture.get_allocated_width()
+        h = self.picture.get_allocated_height()
+        if w <= 0 or h <= 0:
+            return
+
+        cx, cy = w / 2, h / 2
+        dx, dy = x - cx, y - cy
+        dist   = math.hypot(dx, dy)
+
+        threshold = ATTACK_THRESHOLD * self.scale
+        deadzone  = 15 * self.scale
+
+        mode = self.bm.mode()
+
+        if mode not in ("attack", "run", "happy") and dist <= threshold:
+            if dx >=  deadzone:
+                self.facing = 1
+            elif dx <= -deadzone:
+                self.facing = -1
+            self.bm.switch("attack")
+            self._load_behavior()
+
+        elif mode == "attack" and dist > threshold:
+            self.bm.switch("walk")
+            self._load_behavior()
 
     def _on_pointer_leave(self, *_):
         if self._dying or self.bm.mode()!="attack":
