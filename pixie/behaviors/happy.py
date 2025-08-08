@@ -27,9 +27,7 @@ class Happy(Behavior):
                 facing = -1
             elif px > right_thresh:
                 facing =  1
-                facing = self.previous_facing
         else:
             facing = self.previous_facing
 
-        self.previous_facing = facing
         return x, y, facing
