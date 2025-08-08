@@ -3,12 +3,12 @@ import gi
 gi.require_version("GLib", "2.0")
 from gi.repository import GLib
 
-from behaviors.walk   import Walk
-from behaviors.sit    import Sit
-from behaviors.run    import Run
-from behaviors.idle   import Idle
-from behaviors.attack import Attack
-from behaviors.happy  import Happy
+from .behaviors.walk   import Walk
+from .behaviors.sit    import Sit
+from .behaviors.run    import Run
+from .behaviors.idle   import Idle
+from .behaviors.attack import Attack
+from .behaviors.happy  import Happy
 
 class BehaviorManager:
     def __init__(self, width: int, height: int, scale: float = 1.0):
@@ -37,20 +37,16 @@ class BehaviorManager:
             res = self.current.update(x, y)
         nx, ny, facing = res
 
-        from behaviors.walk import Walk
         if isinstance(self.current, Walk) and self.current.steps >= self.current.step_limit:
             self.switch("sit")
 
-        from behaviors.run import Run
         if isinstance(self.current, Run) and self.current.steps >= self.current.step_limit:
             self.switch("walk")
 
-        from behaviors.sit import Sit
         if isinstance(self.current, Sit) and self._sit_timer is None:
             delay = int(random.uniform(7, 15) * 1000)
             self._sit_timer = GLib.timeout_add(delay, self._on_sit_timeout)
 
-        from behaviors.idle import Idle
         if isinstance(self.current, Idle) is False and isinstance(self.current, Walk) and self._idle_timer is None:
             if random.random() < 0.002:
                 self.switch("idle")

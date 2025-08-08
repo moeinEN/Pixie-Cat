@@ -1,0 +1,2 @@
+recursive-include pixie/assets *
+include README.md

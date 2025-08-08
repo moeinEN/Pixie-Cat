@@ -1,4 +1,4 @@
-from behaviors.base import Behavior
+from .base import Behavior
 
 class Idle(Behavior):
     asset         = "assets/idle.gif"

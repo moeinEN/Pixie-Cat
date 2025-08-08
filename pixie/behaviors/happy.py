@@ -1,5 +1,5 @@
-from behaviors.base import Behavior
-from pointer import get_mouse_position
+from .base import Behavior
+from ..pointer import get_mouse_position
 
 class Happy(Behavior):
     asset         = "assets/happy.gif"

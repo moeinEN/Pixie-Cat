@@ -1,5 +1,5 @@
 import random, math
-from behaviors.base import Behavior
+from .base import Behavior
 
 class Run(Behavior):
     asset         = "assets/run.gif"
