@@ -61,9 +61,7 @@ class CatWindow(Gtk.ApplicationWindow):
         self.set_resizable(False)
 
         self._pos_mode = "move"
-        is_wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
-
-        if is_wayland and HAS_LAYERSHELL:
+        if os.environ.get("WAYLAND_DISPLAY") and HAS_LAYERSHELL:
             try:
                 ls.init_for_window(self)
                 ls.set_layer(self, ls.Layer.OVERLAY)
@@ -83,7 +81,9 @@ class CatWindow(Gtk.ApplicationWindow):
 
         disp     = Gdk.Display.get_default()
         monitors = disp.get_monitors()
-        geom     = monitors[0].get_geometry()
+        mon0 = monitors.get_item(0) if hasattr(monitors, "get_item") else monitors[0]
+        geom = mon0.get_geometry()
+
 
         self.bm = BehaviorManager(geom.width, geom.height, scale=self.scale)
 
@@ -196,7 +196,10 @@ class CatWindow(Gtk.ApplicationWindow):
             ls.set_margin(self, ls.Edge.LEFT, int(nx))
             ls.set_margin(self, ls.Edge.TOP,  int(ny))
         else:
-            self.move(int(nx), int(ny))
+            try:
+                self.move(int(nx), int(ny))   # GTK3-style; may not exist on GTK4
+            except AttributeError:
+                pass
 
         self.queue_resize()
 
