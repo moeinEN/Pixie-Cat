@@ -3,3 +3,7 @@
 *.vscode/
 
 *.pyc
+
+.venv*
+build/
+dist/

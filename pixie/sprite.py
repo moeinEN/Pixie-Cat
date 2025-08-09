@@ -1,11 +1,11 @@
-import gi, os
+import gi
 gi.require_version("GdkPixbuf", "2.0")
+gi.require_version("Gdk", "4.0")
 from gi.repository import GdkPixbuf, Gdk, GLib
 
 class AnimatedSprite:
     def __init__(self, filename, fps=12):
         self._is_gif = filename.lower().endswith(".gif")
-
         if self._is_gif:
             self._anim  = GdkPixbuf.PixbufAnimation.new_from_file(filename)
             self._iter  = self._anim.get_iter(None)
@@ -16,14 +16,8 @@ class AnimatedSprite:
             sheet   = GdkPixbuf.Pixbuf.new_from_file(filename)
             size    = sheet.get_height()
             cols    = sheet.get_width() // size
-            self._pixframes = [
-                sheet.new_subpixbuf(i*size, 0, size, size)
-                for i in range(cols)
-            ]
-            self._frames = [
-                Gdk.Texture.new_for_pixbuf(p)
-                for p in self._pixframes
-            ]
+            self._pixframes = [sheet.new_subpixbuf(i*size, 0, size, size) for i in range(cols)]
+            self._frames = [Gdk.Texture.new_for_pixbuf(p) for p in self._pixframes]
             self._index = 0
             self._paint = self._frames[0]
             self._tick  = GLib.timeout_add(int(1000/fps), self._advance_sheet)

@@ -1,13 +1,9 @@
 from __future__ import annotations
-
-import os
-import sys
 from typing import Optional, Tuple
 
 __all__ = ["get_mouse_position"]
 
 _POS_TYPE = Tuple[int, int]
-
 
 def _gtk_backend() -> Optional[_POS_TYPE]:
     try:
@@ -16,18 +12,14 @@ def _gtk_backend() -> Optional[_POS_TYPE]:
         from gi.repository import Gdk
     except (ModuleNotFoundError, ImportError, ValueError):
         return None
-
     display = Gdk.Display.get_default()
     if display is None:
         return None
-
     seat = display.get_default_seat()
     pointer = seat.get_pointer()
-
     if hasattr(pointer, "get_position"):
         _surf, x, y = pointer.get_position()
         return int(x), int(y)
-
     if hasattr(pointer, "get_surface_at_position"):
         surface, sx, sy = pointer.get_surface_at_position()
         if surface is None:
@@ -39,38 +31,34 @@ def _gtk_backend() -> Optional[_POS_TYPE]:
         else:
             ox = oy = 0
         return int(ox + sx), int(oy + sy)
-
     return None
 
-
 def _win_backend() -> Optional[_POS_TYPE]:
-    if os.name != "nt":
-        return None
     try:
+        import os
+        if os.name != "nt":
+            return None
         import ctypes
         from ctypes import wintypes
     except ImportError:
         return None
-
     pt = wintypes.POINT()
     if ctypes.windll.user32.GetCursorPos(ctypes.byref(pt)):
         return pt.x, pt.y
     return None
 
-
 def _x11_backend() -> Optional[_POS_TYPE]:
-    if os.environ.get("WAYLAND_DISPLAY"):
-        return None
     try:
+        import os
+        if os.environ.get("WAYLAND_DISPLAY"):
+            return None
         from Xlib import display
-    except ImportError:
+    except Exception:
         return None
-
     dsp = display.Display()
     root = dsp.screen().root
     data = root.query_pointer()._data
     return data["root_x"], data["root_y"]
-
 
 _backends = (_gtk_backend, _win_backend, _x11_backend)
 
