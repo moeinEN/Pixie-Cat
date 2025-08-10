@@ -1,5 +1,6 @@
 import os, ctypes
 from ctypes import wintypes
+from pixie.debug import debug_print
 
 if os.name == "nt":
     import gi
@@ -60,6 +61,7 @@ class Positioner:
 
         st = os.environ.get("XDG_SESSION_TYPE", "").lower()
         be = os.environ.get("GDK_BACKEND", "").lower()
+        have_wl_env = bool(os.environ.get("WAYLAND_DISPLAY") or os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
         try:
             disp = Gdk.Display.get_default()
             disp_name = type(disp).__name__.lower()
@@ -67,41 +69,39 @@ class Positioner:
             disp = None
             disp_name = ""
 
-        if ("x11" in st) or ("x11" in be) or ("x11" in disp_name):
-            self._backend = "x11"
-        elif ("wayland" in st) or ("wayland" in be) or ("wayland" in disp_name):
+        prefer_wayland = have_wl_env or ("wayland" in disp_name) or ("wayland" in st) or ("wayland" in be)
+        prefer_x11 = ("x11" in disp_name) or ("x11" in st) or ("x11" in be) or os.environ.get("DISPLAY")
+
+        if prefer_wayland:
             self._backend = "wayland"
+        elif prefer_x11:
+            self._backend = "x11"
         else:
             self._backend = "x11" if "x11" in be else ("wayland" if "wayland" in be else "unknown")
 
-        print(f"[pos] detect st='{st}' be='{be}' disp='{disp_name}'")
-        print(f"[pos] backend selection => {self._backend}")
+        debug_print(f"[pos] detect st='{st}' be='{be}' disp='{disp_name}'")
+        debug_print(f"[pos] backend selection => {self._backend}")
 
         self.LayerShell = None
         self._disp_obj = disp
         self._Gdk = Gdk
         self._GdkX11 = None
 
-        if self._backend == "wayland":
+        if self._backend == "wayland" and disp and "wayland" in type(disp).__name__.lower() and have_wl_env:
             try:
                 gi.require_version("Gtk4LayerShell", "1.0")
                 from gi.repository import Gtk4LayerShell as LayerShell
                 self.LayerShell = LayerShell
-                print("[pos] Gtk4LayerShell introspection OK")
-            except Exception as e:
+            except Exception:
                 self.LayerShell = None
-                print(f"[pos] Gtk4LayerShell import failed: {e!r}")
-
             if self.LayerShell and self.window is not None:
                 try:
                     self.LayerShell.init_for_window(self.window)
                     self.LayerShell.set_layer(self.window, self.LayerShell.Layer.TOP)
                     if hasattr(self.LayerShell, "set_keyboard_mode"):
                         self.LayerShell.set_keyboard_mode(self.window, self.LayerShell.KeyboardMode.NONE)
-                        print("[pos] layer-shell set_keyboard_mode -> NONE")
                     elif hasattr(self.LayerShell, "set_keyboard_interactivity"):
                         self.LayerShell.set_keyboard_interactivity(self.window, False)
-                        print("[pos] layer-shell set_keyboard_interactivity -> False")
                     if hasattr(self.LayerShell, "set_exclusive_zone"):
                         self.LayerShell.set_exclusive_zone(self.window, 0)
                     self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.LEFT, True)
@@ -109,35 +109,32 @@ class Positioner:
                     self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.RIGHT, False)
                     self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.BOTTOM, False)
                     self._wl_active = True
-                    print("[pos] layer-shell setup OK")
-                except Exception as e:
+                except Exception:
                     self._wl_active = False
-                    print(f"[pos] layer-shell setup failed: {e!r}")
-            return
 
-        try:
-            gi.require_version("GdkX11", "4.0")
-            from gi.repository import GdkX11
-            self._GdkX11 = GdkX11
-        except Exception:
-            self._GdkX11 = None
-
-        try:
-            self._libX11 = ctypes.CDLL("libX11.so.6")
-            self._libX11.XOpenDisplay.argtypes = [ctypes.c_char_p]
-            self._libX11.XOpenDisplay.restype = ctypes.c_void_p
-            self._libX11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
-            self._libX11.XDefaultRootWindow.restype = ctypes.c_ulong
-            self._libX11.XMoveWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int]
-            self._libX11.XRaiseWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-            self._libX11.XFlush.argtypes = [ctypes.c_void_p]
-            self._libX11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_bool]
-            self._libX11.XInternAtom.restype = ctypes.c_ulong
-            self._libX11.XChangeProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
-            self._libX11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_bool, ctypes.c_long, ctypes.c_void_p]
-            self._libX11.XSendEvent.restype = ctypes.c_int
-        except Exception:
-            self._libX11 = None
+        if self._backend == "x11" or not self._wl_active:
+            try:
+                gi.require_version("GdkX11", "4.0")
+                from gi.repository import GdkX11
+                self._GdkX11 = GdkX11
+            except Exception:
+                self._GdkX11 = None
+            try:
+                self._libX11 = ctypes.CDLL("libX11.so.6")
+                self._libX11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+                self._libX11.XOpenDisplay.restype = ctypes.c_void_p
+                self._libX11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+                self._libX11.XDefaultRootWindow.restype = ctypes.c_ulong
+                self._libX11.XMoveWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int]
+                self._libX11.XRaiseWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+                self._libX11.XFlush.argtypes = [ctypes.c_void_p]
+                self._libX11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_bool]
+                self._libX11.XInternAtom.restype = ctypes.c_ulong
+                self._libX11.XChangeProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+                self._libX11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_bool, ctypes.c_long, ctypes.c_void_p]
+                self._libX11.XSendEvent.restype = ctypes.c_int
+            except Exception:
+                self._libX11 = None
 
     def _ensure_x11_bound(self):
         if self._x11_ready or self._wl_active or os.name == "nt":
@@ -171,7 +168,7 @@ class Positioner:
             self._xid = xid
             self._xdisplay_ptr = ctypes.c_void_p(int(xdisp))
             self._x11_ready = True
-            print(f"[pos] x11 ready xid=0x{int(self._xid):X}")
+            debug_print(f"[pos] x11 ready xid=0x{int(self._xid):X}")
         except Exception:
             self._x11_ready = False
 
@@ -316,7 +313,7 @@ class Positioner:
             ok = self.user32.SetWindowPos(self.hwnd, None, int(x), int(y), 0, 0, self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE)
             self._last_err = 0 if ok else self.kernel32.GetLastError()
             return
-        if self._wl_active and self.LayerShell and self.window:
+        if self._wl_active and self.LayerShell and self.window and "wayland" in type(self._Gdk.Display.get_default()).__name__.lower():
             try:
                 self.LayerShell.set_margin(self.window, self.LayerShell.Edge.LEFT, int(x))
                 self.LayerShell.set_margin(self.window, self.LayerShell.Edge.TOP, int(y))
@@ -324,9 +321,8 @@ class Positioner:
                     self.window.queue_allocate()
                 except Exception:
                     pass
-                print(f"[pos] wl move -> x={int(x)} y={int(y)}")
-            except Exception as e:
-                print(f"[pos] wl move failed: {e!r}")
+            except Exception:
+                pass
             return
         self._ensure_x11_bound()
         if self._x11_ready and self._libX11:

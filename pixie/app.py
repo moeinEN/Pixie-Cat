@@ -1,6 +1,7 @@
 import os, sys, signal, math, argparse, ctypes, ctypes.util, gi
 from importlib import resources
 from .tray import Tray
+from pixie.debug import debug_print
 
 def resolve_asset_path(path: str) -> str:
     if os.path.isabs(path) and os.path.exists(path):
@@ -20,9 +21,9 @@ def resolve_tray_icon():
     ]
     for p in cands:
         if p and os.path.isfile(p):
-            print(f"[app] tray icon resolved: {p}")
+            debug_print(f"[app] tray icon resolved: {p}")
             return p
-    print("[app] no tray icon file found, will use default")
+    debug_print("[app] no tray icon file found, will use default")
     return None
 
 lib = ctypes.util.find_library("gtk4-layer-shell")
@@ -115,7 +116,7 @@ class CatWindow(Gtk.ApplicationWindow):
             except Exception:
                 pass
             GLib.timeout_add(200, self._assert_topmost)
-            print("[map] hide_from_taskbar done")
+            debug_print("[map] hide_from_taskbar done")
             return False
 
         self.connect("map", _after_map)
@@ -142,7 +143,7 @@ class CatWindow(Gtk.ApplicationWindow):
             pos_ok = bool(self.pos.always_on_top())
         except Exception:
             pass
-        print(f"[top] tick asserted topmost: pos={pos_ok} keep_above={keep_above_ok} {self.pos.debug_report()}")
+        debug_print(f"[top] tick asserted topmost: pos={pos_ok} keep_above={keep_above_ok} {self.pos.debug_report()}")
         GLib.timeout_add(1500, self._assert_topmost)
         return False
 
@@ -302,9 +303,9 @@ def assert_top_tick(app):
             keep = bool(app.win.get_keep_above())
         except Exception:
             pass
-        print(f"[top] tick asserted topmost: pos={bool(ok)} keep_above={keep} {pos.debug_report()}")
+        debug_print(f"[top] tick asserted topmost: pos={bool(ok)} keep_above={keep} {pos.debug_report()}")
     except Exception as e:
-        print(f"[top] tick error: {e!r}")
+        debug_print(f"[top] tick error: {e!r}")
     return True
 
 def on_activate(app):
@@ -319,20 +320,20 @@ def on_activate(app):
     app.win.present()
     try:
         app.hold()
-        print("[app] application hold")
+        debug_print("[app] application hold")
     except Exception as e:
-        print("[app] app.hold not available:", repr(e))
+        debug_print("[app] app.hold not available:", repr(e))
     try:
         icon_path = resolve_tray_icon()
         def quit_app():
             GLib.idle_add(app.win._on_close_request)
         app.tray = Tray("Pixie", icon_path, on_quit=quit_app)
         ok = app.tray.start()
-        print(f"[app] tray started = {bool(ok)}")
+        debug_print(f"[app] tray started = {bool(ok)}")
     except Exception as e:
-        print("[app] tray init failed:", repr(e))
+        debug_print("[app] tray init failed:", repr(e))
 
-    print("[pos]", app.win.pos.debug_report())
+    debug_print("[pos]", app.win.pos.debug_report())
     GLib.timeout_add(1000, lambda: assert_top_tick(app))
 
 def main(argv=None):

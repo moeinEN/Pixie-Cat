@@ -2,6 +2,7 @@ import os
 import threading
 import ctypes
 from ctypes import wintypes
+from pixie.debug import debug_print
 
 class Tray:
     def __init__(self, title: str, icon_path: str | None, on_quit):
@@ -20,12 +21,12 @@ class Tray:
 
     def start(self) -> bool:
         try:
-            print(f"[tray] start backend={self._mode}")
+            debug_print(f"[tray] start backend={self._mode}")
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
             return True
         except Exception as e:
-            print(f"[tray] start failed: {e!r}")
+            debug_print(f"[tray] start failed: {e!r}")
             return False
 
     def stop(self):
@@ -38,15 +39,15 @@ class Tray:
                 if hasattr(self, "_hwnd") and self._hwnd:
                     ctypes.windll.user32.PostMessageW(self._hwnd, 0x0010, 0, 0)
         except Exception as e:
-            print(f"[tray] stop error: {e!r}")
+            debug_print(f"[tray] stop error: {e!r}")
 
     def _run(self):
         try:
             if os.name == "nt":
-                print("[tray] start backend=ctypes")
+                debug_print("[tray] start backend=ctypes")
                 self._run_ctypes()
             else:
-                print("[tray] tray disabled on non-Windows; skipping")
+                debug_print("[tray] tray disabled on non-Windows; skipping")
         finally:
             self._running = False
 
@@ -72,7 +73,7 @@ class Tray:
                     if callable(self.on_quit):
                         self.on_quit()
                 except Exception as e:
-                    print(f"[tray] on_quit error: {e!r}")
+                    debug_print(f"[tray] on_quit error: {e!r}")
                 return 0
             if msg == WM_TRAY and lParam == win32con.WM_RBUTTONUP:
                 menu = win32gui.CreatePopupMenu()
@@ -108,19 +109,19 @@ class Tray:
                     0, self.icon_path, win32con.IMAGE_ICON, 0, 0,
                     win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE
                 )
-                print("[tray] pywin32: loaded .ico")
+                debug_print("[tray] pywin32: loaded .ico")
             except Exception as e:
-                print(f"[tray] pywin32: LoadImage failed: {e!r}")
+                debug_print(f"[tray] pywin32: LoadImage failed: {e!r}")
         if not hicon:
             hicon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
-            print("[tray] pywin32: using default icon")
+            debug_print("[tray] pywin32: using default icon")
 
         flags = win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
         nid = (hwnd, 1, flags, WM_TRAY, hicon, self.title[:127])
         try:
             win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, nid)
         except Exception as e:
-            print(f"[tray] pywin32: NIM_ADD failed: {e!r}")
+            debug_print(f"[tray] pywin32: NIM_ADD failed: {e!r}")
             return
 
         try:
@@ -201,11 +202,11 @@ class Tray:
                     0, self.icon_path, 1, 0, 0, 0x00000010 | 0x00008000
                 )
                 if hicon:
-                    print("[tray] ctypes: loaded .ico")
+                    debug_print("[tray] ctypes: loaded .ico")
                     return hicon
                 else:
-                    print(f"[tray] ctypes: LoadImageW failed err={kernel32.GetLastError()}")
-            print("[tray] ctypes: using default icon")
+                    debug_print(f"[tray] ctypes: LoadImageW failed err={kernel32.GetLastError()}")
+            debug_print("[tray] ctypes: using default icon")
             return user32.LoadIconW(None, 32512)
 
         @WNDPROCTYPE
@@ -215,7 +216,7 @@ class Tray:
                     if callable(self.on_quit):
                         self.on_quit()
                 except Exception as e:
-                    print(f"[tray] on_quit error: {e!r}")
+                    debug_print(f"[tray] on_quit error: {e!r}")
                 return 0
             if msg == WM_TRAY and lParam == WM_RBUTTONUP:
                 hmenu = user32.CreatePopupMenu()
@@ -249,7 +250,7 @@ class Tray:
         cls.lpszClassName = "PixieTrayWindow"
         if not user32.RegisterClassW(ctypes.byref(cls)):
             err = kernel32.GetLastError()
-            print(f"[tray] ctypes: RegisterClassW failed err={err}")
+            debug_print(f"[tray] ctypes: RegisterClassW failed err={err}")
 
         hwnd = user32.CreateWindowExW(
             0x00000080,
@@ -260,7 +261,7 @@ class Tray:
             None, None, hInstance, None
         )
         if not hwnd:
-            print(f"[tray] ctypes: CreateWindowExW failed err={kernel32.GetLastError()}")
+            debug_print(f"[tray] ctypes: CreateWindowExW failed err={kernel32.GetLastError()}")
             return
         self._hwnd = hwnd
 
@@ -278,7 +279,7 @@ class Tray:
 
         ok = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
         if not ok:
-            print(f"[tray] ctypes: NIM_ADD failed err={kernel32.GetLastError()}")
+            debug_print(f"[tray] ctypes: NIM_ADD failed err={kernel32.GetLastError()}")
             return
 
         msg = wintypes.MSG()
