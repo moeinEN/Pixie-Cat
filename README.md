@@ -4,8 +4,7 @@
 The cat has a soul and lives with you all the time — through your good and bad memories.  
 With Pixie Cat, you’re never truly alone.
 
-<video src="demo/demo.mp4" controls autoplay loop muted style="max-width: 100%; height: auto;">
-</video>
+![Pixie Cat Demo](https://github.com/moeinEN/Pixie-Cat/blob/main/demo/demo.mp4)
 
 ---
 
