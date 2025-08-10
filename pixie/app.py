@@ -73,6 +73,7 @@ class CatWindow(Gtk.ApplicationWindow):
         self.add_css_class("transparent")
         self.set_decorated(False)
         self.set_resizable(False)
+        
 
         disp     = Gdk.Display.get_default()
         monitors = disp.get_monitors()
@@ -330,6 +331,8 @@ def on_activate(app):
         print(f"[app] tray started = {bool(ok)}")
     except Exception as e:
         print("[app] tray init failed:", repr(e))
+
+    print("[pos]", app.win.pos.debug_report())
     GLib.timeout_add(1000, lambda: assert_top_tick(app))
 
 def main(argv=None):

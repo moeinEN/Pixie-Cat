@@ -42,11 +42,11 @@ class Tray:
 
     def _run(self):
         try:
-            self._running = True
-            if self._mode == "pywin32":
-                self._run_pywin32()
-            else:
+            if os.name == "nt":
+                print("[tray] start backend=ctypes")
                 self._run_ctypes()
+            else:
+                print("[tray] tray disabled on non-Windows; skipping")
         finally:
             self._running = False
 

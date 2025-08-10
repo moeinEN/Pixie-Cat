@@ -5,8 +5,6 @@ if os.name == "nt":
     import gi
     gi.require_version('GdkWin32', '4.0')
     from gi.repository import GdkWin32
-else:
-    GdkWin32 = None
 
 class Positioner:
     GWL_EXSTYLE = -20
@@ -24,12 +22,17 @@ class Positioner:
     def __init__(self, window=None, title=None):
         self.window = window
         self.title = title or (window.get_title() if window else "Pixie")
-        self.hwnd = None
-        self._styled = False
         self._last_err = 0
-        self._hwnd_cache = 0
+
+        self._backend = "win32" if os.name == "nt" else "unknown"
+        self._wl_active = False
+        self._x11_ready = False
 
         if os.name == "nt":
+            self.hwnd = None
+            self._styled = False
+            self._hwnd_cache = 0
+
             self.user32 = ctypes.windll.user32
             self.kernel32 = ctypes.windll.kernel32
 
@@ -53,11 +56,98 @@ class Positioner:
             mask = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
             self.HWND_TOPMOST = ctypes.c_void_p((-1) & mask)
             self.HWND_NOTOPMOST = ctypes.c_void_p((-2) & mask)
+            return
+
+        import gi
+        gi.require_version('Gdk', '4.0'); gi.require_version('Gtk', '4.0')
+        from gi.repository import Gdk, Gtk
+
+        st = os.environ.get('XDG_SESSION_TYPE', '').lower()
+        be = os.environ.get('GDK_BACKEND', '').lower()
+        try:
+            disp = Gdk.Display.get_default()
+            disp_name = type(disp).__name__.lower()
+        except Exception:
+            disp_name = ''
+
+        if 'wayland' in (st or be or disp_name):
+            self._backend = 'wayland'
+        elif 'x11' in (st or be or disp_name):
+            self._backend = 'x11'
         else:
-            self.user32 = None
-            self.kernel32 = None
-            self.HWND_TOPMOST = None
-            self.HWND_NOTOPMOST = None
+            self._backend = 'unknown'
+
+        print(f"[pos] detect st='{st}' be='{be}' disp='{disp_name}'")
+        print(f"[pos] backend selection => {self._backend}")
+
+        self.LayerShell = None
+        if self._backend == 'wayland':
+            try:
+                gi.require_version('Gtk4LayerShell', '1.0')
+                from gi.repository import Gtk4LayerShell as LayerShell
+                self.LayerShell = LayerShell
+                print("[pos] Gtk4LayerShell introspection OK")
+            except Exception as e:
+                self.LayerShell = None
+                print(f"[pos] Gtk4LayerShell import failed: {e!r}")
+
+            if self.LayerShell and self.window is not None:
+                try:
+                    self.LayerShell.init_for_window(self.window)
+                    self.LayerShell.set_layer(self.window, self.LayerShell.Layer.TOP)
+
+                    if hasattr(self.LayerShell, "set_keyboard_mode"):
+                        self.LayerShell.set_keyboard_mode(
+                            self.window, self.LayerShell.KeyboardMode.NONE
+                        )
+                        print("[pos] layer-shell set_keyboard_mode -> NONE")
+                    elif hasattr(self.LayerShell, "set_keyboard_interactivity"):
+                        self.LayerShell.set_keyboard_interactivity(self.window, False)
+                        print("[pos] layer-shell set_keyboard_interactivity -> False")
+                    else:
+                        print("[pos] WARNING: no keyboard API found on Gtk4LayerShell")
+
+                    if hasattr(self.LayerShell, "set_exclusive_zone"):
+                        self.LayerShell.set_exclusive_zone(self.window, 0)
+
+                    self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.LEFT, True)
+                    self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.TOP,  True)
+                    self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.RIGHT, False)
+                    self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.BOTTOM, False)
+
+                    self._wl_active = True
+                    print("[pos] layer-shell setup OK")
+                except Exception as e:
+                    self._wl_active = False
+                    print(f"[pos] layer-shell setup failed: {e!r}")
+
+        self._xdisplay = None
+        self._xid = 0
+        if self._backend == 'x11' and not self._wl_active:
+            try:
+                gi.require_version('GdkX11', '4.0')
+                from gi.repository import GdkX11
+                self.GdkX11 = GdkX11
+            except Exception:
+                self.GdkX11 = None
+
+            try:
+                from Xlib import display as Xdisplay, X
+                self.Xdisplay = Xdisplay
+                self.X = X
+            except Exception:
+                self.Xdisplay = None
+                self.X = None
+
+            if self.GdkX11 and self.Xdisplay and self.window is not None:
+                try:
+                    surf = self.window.get_surface()
+                    if surf is not None:
+                        self._xid = self.GdkX11.X11Surface.get_xid(surf)
+                        self._xdisplay = self.Xdisplay.Display()
+                        self._x11_ready = bool(self._xdisplay and self._xid)
+                except Exception:
+                    self._x11_ready = False
 
     def _get_hwnd(self):
         if os.name != "nt":
@@ -74,7 +164,7 @@ class Positioner:
             pass
 
         try:
-            if GdkWin32 is not None and self.window is not None:
+            if 'GdkWin32' in globals() and self.window is not None:
                 surf = None
                 try:
                     surf = self.window.get_surface()
@@ -119,20 +209,20 @@ class Positioner:
     def _find_hwnd(self):
         if os.name != "nt":
             return None
-        if self.hwnd and self.user32.IsWindow(self.hwnd):
+        if getattr(self, "hwnd", None) and self.user32.IsWindow(self.hwnd):
             return self.hwnd
         t = self.title or "Pixie"
         hwnd = self.user32.FindWindowW(None, t)
         if hwnd:
             self.hwnd = hwnd
-        return self.hwnd
+        return getattr(self, "hwnd", None)
 
     def _apply_styles_once(self):
         if os.name != "nt":
             return
         if not self._find_hwnd():
             return
-        if self._styled:
+        if getattr(self, "_styled", False):
             return
         ex = self.user32.GetWindowLongPtrW(self.hwnd, self.GWL_EXSTYLE)
         ex = (ex | self.WS_EX_TOOLWINDOW | self.WS_EX_NOACTIVATE) & ~self.WS_EX_APPWINDOW
@@ -144,55 +234,101 @@ class Positioner:
         self._styled = True
 
     def set_position(self, x, y):
-        if os.name != "nt":
+        if os.name == "nt":
+            if not self._find_hwnd():
+                return
+            self._apply_styles_once()
+            ok = self.user32.SetWindowPos(
+                self.hwnd, None, int(x), int(y), 0, 0,
+                self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE
+            )
+            self._last_err = 0 if ok else self.kernel32.GetLastError()
             return
-        if not self._find_hwnd():
+
+        if self._wl_active and self.LayerShell and self.window:
+            try:
+                self.LayerShell.set_margin(self.window, self.LayerShell.Edge.LEFT, int(x))
+                self.LayerShell.set_margin(self.window, self.LayerShell.Edge.TOP,  int(y))
+                try:
+                    self.window.queue_allocate()
+                except Exception:
+                    pass
+                print(f"[pos] wl move -> x={int(x)} y={int(y)}")
+            except Exception as e:
+                print(f"[pos] wl move failed: {e!r}")
             return
-        self._apply_styles_once()
-        ok = self.user32.SetWindowPos(
-            self.hwnd, None, int(x), int(y), 0, 0,
-            self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE
-        )
-        self._last_err = 0 if ok else self.kernel32.GetLastError()
+
+        if self._x11_ready:
+            try:
+                w = self._xdisplay.create_resource_object('window', int(self._xid))
+                w.configure(x=int(x), y=int(y))
+                self._xdisplay.sync()
+            except Exception:
+                pass
 
     def hide_from_taskbar(self):
-        if os.name != "nt":
+        if os.name == "nt":
+            if not self._find_hwnd():
+                return
+            self._styled = False
+            self._apply_styles_once()
             return
-        if not self._find_hwnd():
-            return
-        self._styled = False
-        self._apply_styles_once()
 
     def always_on_top(self):
-        if os.name != "nt":
-            return False
-        if not self._find_hwnd():
-            return False
-        self._apply_styles_once()
-        ok = self.user32.SetWindowPos(
-            self.hwnd, self.HWND_TOPMOST, 0, 0, 0, 0,
-            self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOACTIVATE | self.SWP_SHOWWINDOW
-        )
-        self._last_err = 0 if ok else self.kernel32.GetLastError()
-        return bool(ok)
+        if os.name == "nt":
+            if not self._find_hwnd():
+                return False
+            self._apply_styles_once()
+            ok = self.user32.SetWindowPos(
+                self.hwnd, self.HWND_TOPMOST, 0, 0, 0, 0,
+                self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOACTIVATE | self.SWP_SHOWWINDOW
+            )
+            self._last_err = 0 if ok else self.kernel32.GetLastError()
+            return bool(ok)
 
-    def assert_topmost(self):
-        if os.name != "nt":
+        if self._wl_active:
+            return True
+
+        if self._x11_ready:
             try:
-                self.window.set_keep_above(True)
+                w = self._xdisplay.create_resource_object('window', int(self._xid))
+                w.configure(stack_mode=self.X.Above)
+                self._xdisplay.sync()
                 return True
             except Exception:
                 return False
-        hwnd = self._get_hwnd()
-        if not hwnd:
-            return False
-        flags = self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOACTIVATE
-        ok = self.user32.SetWindowPos(hwnd, self.HWND_TOPMOST, 0, 0, 0, 0, flags)
-        lasterr = ctypes.get_last_error()
-        return bool(ok)
+
+        return False
+
+    def assert_topmost(self):
+        if os.name == "nt":
+            hwnd = self._get_hwnd()
+            if not hwnd:
+                return False
+            flags = self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOACTIVATE
+            ok = self.user32.SetWindowPos(hwnd, self.HWND_TOPMOST, 0, 0, 0, 0, flags)
+            return bool(ok)
+
+        if self._wl_active:
+            return True
+        if self._x11_ready:
+            try:
+                w = self._xdisplay.create_resource_object('window', int(self._xid))
+                w.configure(stack_mode=self.X.Above)
+                self._xdisplay.sync()
+                return True
+            except Exception:
+                return False
+        return False
 
     def debug_report(self):
-        if os.name != "nt":
-            return "non-win32"
-        ptr = ctypes.cast(self.hwnd, ctypes.c_void_p).value if self.hwnd else 0
-        return f"hwnd=0x{ptr:X} lasterr={self._last_err}"
+        if os.name == "nt":
+            ptr = ctypes.cast(getattr(self, "hwnd", None), ctypes.c_void_p).value if getattr(self, "hwnd", None) else 0
+            return f"hwnd=0x{ptr:X} lasterr={self._last_err}"
+        if self._wl_active:
+            return "backend=wayland layer-shell=on"
+        if self._backend == "wayland" and not self._wl_active:
+            return "backend=wayland layer-shell=OFF"
+        if self._x11_ready:
+            return f"backend=x11 xid=0x{int(self._xid):X}"
+        return f"backend={self._backend}"
