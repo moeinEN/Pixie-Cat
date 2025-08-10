@@ -97,7 +97,7 @@ Before installing, make sure you have:
 3. Run it with:
 
    ```bash
-   pixie
+   pixie & disown
    ```
 
 ---
