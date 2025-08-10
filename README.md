@@ -100,4 +100,44 @@ Before installing, make sure you have:
    pixie & disown
    ```
 
+## Command-Line Options
+
+Pixie Cat can be customized when you start it. You can change the **scale**, **color**, and **speed** of your cat.
+
+```bash
+pixie --scale <factor> --color <hex> --speed <multiplier>
+```
+
+**Options:**
+
+* `--scale` — Adjusts the size of the cat.
+  Example:
+
+  ```bash
+  pixie --scale 2.0   # Twice as large
+  pixie --scale 0.5   # Half the size
+  ```
+
+* `--color` — Changes the color tint of the cat using a HEX color code.
+  Example:
+
+  ```bash
+  pixie --color "#FF69B4"   # Pink cat
+  pixie --color "#00FFFF"   # Cyan cat
+  ```
+
+* `--speed` — Controls the animation speed.
+  Example:
+
+  ```bash
+  pixie --speed 0.5   # Slower animations
+  pixie --speed 2.0   # Faster animations
+  ```
+
+You can combine options:
+
+```bash
+pixie --scale 1.5 --color "#FFD700" --speed 1.2
+```
+
 ---
