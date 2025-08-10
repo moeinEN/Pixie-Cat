@@ -3,7 +3,7 @@ from ctypes import wintypes
 
 if os.name == "nt":
     import gi
-    gi.require_version('GdkWin32', '4.0')
+    gi.require_version("GdkWin32", "4.0")
     from gi.repository import GdkWin32
 
 class Positioner:
@@ -23,25 +23,23 @@ class Positioner:
         self.window = window
         self.title = title or (window.get_title() if window else "Pixie")
         self._last_err = 0
-
         self._backend = "win32" if os.name == "nt" else "unknown"
         self._wl_active = False
         self._x11_ready = False
+        self._xid = 0
+        self._xdisplay_ptr = None
+        self._libX11 = None
+        self._atoms = {}
+        self._x11_state_applied = False
 
         if os.name == "nt":
             self.hwnd = None
             self._styled = False
             self._hwnd_cache = 0
-
             self.user32 = ctypes.windll.user32
             self.kernel32 = ctypes.windll.kernel32
-
             self.user32.SetWindowPos.restype = wintypes.BOOL
-            self.user32.SetWindowPos.argtypes = [
-                wintypes.HWND, wintypes.HWND,
-                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                ctypes.c_uint
-            ]
+            self.user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
             self.user32.FindWindowW.restype = wintypes.HWND
             self.user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
             self.user32.IsWindow.restype = wintypes.BOOL
@@ -51,39 +49,42 @@ class Positioner:
             self.user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
             self.user32.SetWindowLongPtrW.restype = ctypes.c_longlong
             self.user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_longlong]
-            self.kernel32.GetLastError.restype = wintypes.DWORD
-
             mask = (1 << (ctypes.sizeof(ctypes.c_void_p) * 8)) - 1
             self.HWND_TOPMOST = ctypes.c_void_p((-1) & mask)
             self.HWND_NOTOPMOST = ctypes.c_void_p((-2) & mask)
             return
 
         import gi
-        gi.require_version('Gdk', '4.0'); gi.require_version('Gtk', '4.0')
-        from gi.repository import Gdk, Gtk
+        gi.require_version("Gdk", "4.0"); gi.require_version("Gtk", "4.0")
+        from gi.repository import Gdk
 
-        st = os.environ.get('XDG_SESSION_TYPE', '').lower()
-        be = os.environ.get('GDK_BACKEND', '').lower()
+        st = os.environ.get("XDG_SESSION_TYPE", "").lower()
+        be = os.environ.get("GDK_BACKEND", "").lower()
         try:
             disp = Gdk.Display.get_default()
             disp_name = type(disp).__name__.lower()
         except Exception:
-            disp_name = ''
+            disp = None
+            disp_name = ""
 
-        if 'wayland' in (st or be or disp_name):
-            self._backend = 'wayland'
-        elif 'x11' in (st or be or disp_name):
-            self._backend = 'x11'
+        if ("x11" in st) or ("x11" in be) or ("x11" in disp_name):
+            self._backend = "x11"
+        elif ("wayland" in st) or ("wayland" in be) or ("wayland" in disp_name):
+            self._backend = "wayland"
         else:
-            self._backend = 'unknown'
+            self._backend = "x11" if "x11" in be else ("wayland" if "wayland" in be else "unknown")
 
         print(f"[pos] detect st='{st}' be='{be}' disp='{disp_name}'")
         print(f"[pos] backend selection => {self._backend}")
 
         self.LayerShell = None
-        if self._backend == 'wayland':
+        self._disp_obj = disp
+        self._Gdk = Gdk
+        self._GdkX11 = None
+
+        if self._backend == "wayland":
             try:
-                gi.require_version('Gtk4LayerShell', '1.0')
+                gi.require_version("Gtk4LayerShell", "1.0")
                 from gi.repository import Gtk4LayerShell as LayerShell
                 self.LayerShell = LayerShell
                 print("[pos] Gtk4LayerShell introspection OK")
@@ -95,59 +96,138 @@ class Positioner:
                 try:
                     self.LayerShell.init_for_window(self.window)
                     self.LayerShell.set_layer(self.window, self.LayerShell.Layer.TOP)
-
                     if hasattr(self.LayerShell, "set_keyboard_mode"):
-                        self.LayerShell.set_keyboard_mode(
-                            self.window, self.LayerShell.KeyboardMode.NONE
-                        )
+                        self.LayerShell.set_keyboard_mode(self.window, self.LayerShell.KeyboardMode.NONE)
                         print("[pos] layer-shell set_keyboard_mode -> NONE")
                     elif hasattr(self.LayerShell, "set_keyboard_interactivity"):
                         self.LayerShell.set_keyboard_interactivity(self.window, False)
                         print("[pos] layer-shell set_keyboard_interactivity -> False")
-                    else:
-                        print("[pos] WARNING: no keyboard API found on Gtk4LayerShell")
-
                     if hasattr(self.LayerShell, "set_exclusive_zone"):
                         self.LayerShell.set_exclusive_zone(self.window, 0)
-
                     self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.LEFT, True)
-                    self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.TOP,  True)
+                    self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.TOP, True)
                     self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.RIGHT, False)
                     self.LayerShell.set_anchor(self.window, self.LayerShell.Edge.BOTTOM, False)
-
                     self._wl_active = True
                     print("[pos] layer-shell setup OK")
                 except Exception as e:
                     self._wl_active = False
                     print(f"[pos] layer-shell setup failed: {e!r}")
+            return
 
-        self._xdisplay = None
-        self._xid = 0
-        if self._backend == 'x11' and not self._wl_active:
+        try:
+            gi.require_version("GdkX11", "4.0")
+            from gi.repository import GdkX11
+            self._GdkX11 = GdkX11
+        except Exception:
+            self._GdkX11 = None
+
+        try:
+            self._libX11 = ctypes.CDLL("libX11.so.6")
+            self._libX11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+            self._libX11.XOpenDisplay.restype = ctypes.c_void_p
+            self._libX11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+            self._libX11.XDefaultRootWindow.restype = ctypes.c_ulong
+            self._libX11.XMoveWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_int]
+            self._libX11.XRaiseWindow.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+            self._libX11.XFlush.argtypes = [ctypes.c_void_p]
+            self._libX11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_bool]
+            self._libX11.XInternAtom.restype = ctypes.c_ulong
+            self._libX11.XChangeProperty.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_ulong, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+            self._libX11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_bool, ctypes.c_long, ctypes.c_void_p]
+            self._libX11.XSendEvent.restype = ctypes.c_int
+        except Exception:
+            self._libX11 = None
+
+    def _ensure_x11_bound(self):
+        if self._x11_ready or self._wl_active or os.name == "nt":
+            return
+        if not self.window:
+            return
+        surf = None
+        try:
+            surf = self.window.get_surface()
+        except Exception:
+            surf = None
+        if not surf:
+            return
+        xid = 0
+        if self._GdkX11:
             try:
-                gi.require_version('GdkX11', '4.0')
-                from gi.repository import GdkX11
-                self.GdkX11 = GdkX11
+                xid = int(self._GdkX11.X11Surface.get_xid(surf))
             except Exception:
-                self.GdkX11 = None
-
+                xid = 0
+        if not xid:
+            return
+        xdisp = None
+        if self._libX11:
             try:
-                from Xlib import display as Xdisplay, X
-                self.Xdisplay = Xdisplay
-                self.X = X
+                xdisp = self._libX11.XOpenDisplay(None)
             except Exception:
-                self.Xdisplay = None
-                self.X = None
+                xdisp = None
+        if not xdisp:
+            return
+        try:
+            self._xid = xid
+            self._xdisplay_ptr = ctypes.c_void_p(int(xdisp))
+            self._x11_ready = True
+            print(f"[pos] x11 ready xid=0x{int(self._xid):X}")
+        except Exception:
+            self._x11_ready = False
 
-            if self.GdkX11 and self.Xdisplay and self.window is not None:
-                try:
-                    surf = self.window.get_surface()
-                    if surf is not None:
-                        self._xid = self.GdkX11.X11Surface.get_xid(surf)
-                        self._xdisplay = self.Xdisplay.Display()
-                        self._x11_ready = bool(self._xdisplay and self._xid)
-                except Exception:
-                    self._x11_ready = False
+    def _atom(self, name):
+        if not self._libX11 or not self._xdisplay_ptr:
+            return 0
+        a = self._atoms.get(name)
+        if a:
+            return a
+        a = self._libX11.XInternAtom(self._xdisplay_ptr, name.encode("utf-8"), False)
+        self._atoms[name] = a
+        return a
+
+    def _x11_apply_above(self):
+        if not self._x11_ready or not self._libX11:
+            return False
+        nstate = self._atom("_NET_WM_STATE")
+        s_above = self._atom("_NET_WM_STATE_ABOVE")
+        if not (nstate and s_above):
+            return False
+        arr = (ctypes.c_ulong * 1)()
+        arr[0] = s_above
+        self._libX11.XChangeProperty(self._xdisplay_ptr, ctypes.c_ulong(self._xid), nstate, self._atom("ATOM"), 32, 0, ctypes.cast(ctypes.pointer(arr), ctypes.c_void_p), 1)
+        root = self._libX11.XDefaultRootWindow(self._xdisplay_ptr)
+        data = (ctypes.c_long * 5)()
+        data[0] = 1
+        data[1] = ctypes.c_long(s_above).value
+        data[2] = 0
+        data[3] = 0
+        data[4] = 0
+        class XClientMessageEvent(ctypes.Structure):
+            _fields_ = [
+                ("type", ctypes.c_int),
+                ("serial", ctypes.c_ulong),
+                ("send_event", ctypes.c_int),
+                ("display", ctypes.c_void_p),
+                ("window", ctypes.c_ulong),
+                ("message_type", ctypes.c_ulong),
+                ("format", ctypes.c_int),
+                ("data", ctypes.c_long * 5),
+            ]
+        ev = XClientMessageEvent()
+        ev.type = 33
+        ev.serial = 0
+        ev.send_event = 1
+        ev.display = self._xdisplay_ptr
+        ev.window = ctypes.c_ulong(self._xid).value
+        ev.message_type = ctypes.c_ulong(nstate).value
+        ev.format = 32
+        ev.data = data
+        SubstructureRedirectMask = 0x00100000
+        SubstructureNotifyMask = 0x00080000
+        mask = SubstructureRedirectMask | SubstructureNotifyMask
+        self._libX11.XSendEvent(self._xdisplay_ptr, ctypes.c_ulong(root), False, ctypes.c_long(mask), ctypes.byref(ev))
+        self._libX11.XFlush(self._xdisplay_ptr)
+        return True
 
     def _get_hwnd(self):
         if os.name != "nt":
@@ -162,7 +242,6 @@ class Positioner:
                     pass
         except Exception:
             pass
-
         try:
             if 'GdkWin32' in globals() and self.window is not None:
                 surf = None
@@ -181,7 +260,6 @@ class Positioner:
                         pass
         except Exception:
             pass
-
         try:
             import win32gui, win32process
             pid = os.getpid()
@@ -227,10 +305,7 @@ class Positioner:
         ex = self.user32.GetWindowLongPtrW(self.hwnd, self.GWL_EXSTYLE)
         ex = (ex | self.WS_EX_TOOLWINDOW | self.WS_EX_NOACTIVATE) & ~self.WS_EX_APPWINDOW
         self.user32.SetWindowLongPtrW(self.hwnd, self.GWL_EXSTYLE, ex)
-        self.user32.SetWindowPos(
-            self.hwnd, None, 0, 0, 0, 0,
-            self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_FRAMECHANGED
-        )
+        self.user32.SetWindowPos(self.hwnd, None, 0, 0, 0, 0, self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_FRAMECHANGED)
         self._styled = True
 
     def set_position(self, x, y):
@@ -238,17 +313,13 @@ class Positioner:
             if not self._find_hwnd():
                 return
             self._apply_styles_once()
-            ok = self.user32.SetWindowPos(
-                self.hwnd, None, int(x), int(y), 0, 0,
-                self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE
-            )
+            ok = self.user32.SetWindowPos(self.hwnd, None, int(x), int(y), 0, 0, self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE)
             self._last_err = 0 if ok else self.kernel32.GetLastError()
             return
-
         if self._wl_active and self.LayerShell and self.window:
             try:
                 self.LayerShell.set_margin(self.window, self.LayerShell.Edge.LEFT, int(x))
-                self.LayerShell.set_margin(self.window, self.LayerShell.Edge.TOP,  int(y))
+                self.LayerShell.set_margin(self.window, self.LayerShell.Edge.TOP, int(y))
                 try:
                     self.window.queue_allocate()
                 except Exception:
@@ -257,12 +328,11 @@ class Positioner:
             except Exception as e:
                 print(f"[pos] wl move failed: {e!r}")
             return
-
-        if self._x11_ready:
+        self._ensure_x11_bound()
+        if self._x11_ready and self._libX11:
             try:
-                w = self._xdisplay.create_resource_object('window', int(self._xid))
-                w.configure(x=int(x), y=int(y))
-                self._xdisplay.sync()
+                self._libX11.XMoveWindow(self._xdisplay_ptr, ctypes.c_ulong(self._xid), int(x), int(y))
+                self._libX11.XFlush(self._xdisplay_ptr)
             except Exception:
                 pass
 
@@ -279,25 +349,21 @@ class Positioner:
             if not self._find_hwnd():
                 return False
             self._apply_styles_once()
-            ok = self.user32.SetWindowPos(
-                self.hwnd, self.HWND_TOPMOST, 0, 0, 0, 0,
-                self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOACTIVATE | self.SWP_SHOWWINDOW
-            )
+            ok = self.user32.SetWindowPos(self.hwnd, self.HWND_TOPMOST, 0, 0, 0, 0, self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOACTIVATE | self.SWP_SHOWWINDOW)
             self._last_err = 0 if ok else self.kernel32.GetLastError()
             return bool(ok)
-
         if self._wl_active:
             return True
-
-        if self._x11_ready:
+        self._ensure_x11_bound()
+        if self._x11_ready and self._libX11:
             try:
-                w = self._xdisplay.create_resource_object('window', int(self._xid))
-                w.configure(stack_mode=self.X.Above)
-                self._xdisplay.sync()
+                self._libX11.XRaiseWindow(self._xdisplay_ptr, ctypes.c_ulong(self._xid))
+                if not self._x11_state_applied:
+                    self._x11_state_applied = self._x11_apply_above()
+                self._libX11.XFlush(self._xdisplay_ptr)
                 return True
             except Exception:
                 return False
-
         return False
 
     def assert_topmost(self):
@@ -308,14 +374,15 @@ class Positioner:
             flags = self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOACTIVATE
             ok = self.user32.SetWindowPos(hwnd, self.HWND_TOPMOST, 0, 0, 0, 0, flags)
             return bool(ok)
-
         if self._wl_active:
             return True
-        if self._x11_ready:
+        self._ensure_x11_bound()
+        if self._x11_ready and self._libX11:
             try:
-                w = self._xdisplay.create_resource_object('window', int(self._xid))
-                w.configure(stack_mode=self.X.Above)
-                self._xdisplay.sync()
+                self._libX11.XRaiseWindow(self._xdisplay_ptr, ctypes.c_ulong(self._xid))
+                if not self._x11_state_applied:
+                    self._x11_state_applied = self._x11_apply_above()
+                self._libX11.XFlush(self._xdisplay_ptr)
                 return True
             except Exception:
                 return False
