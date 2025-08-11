@@ -11,7 +11,6 @@ class Tray:
         self.on_quit = on_quit
         self._thread = None
         self._running = False
-
         self._mode = None
         try:
             import win32api, win32con, win32gui
@@ -21,6 +20,9 @@ class Tray:
 
     def start(self) -> bool:
         try:
+            if os.name != "nt":
+                debug_print("[tray] tray disabled on non-Windows; skipping")
+                return False
             debug_print(f"[tray] start backend={self._mode}")
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
@@ -31,6 +33,8 @@ class Tray:
 
     def stop(self):
         try:
+            if os.name != "nt":
+                return
             if self._mode == "pywin32":
                 import win32gui, win32con
                 if hasattr(self, "_hwnd") and self._hwnd:
@@ -43,11 +47,10 @@ class Tray:
 
     def _run(self):
         try:
-            if os.name == "nt":
-                debug_print("[tray] start backend=ctypes")
-                self._run_ctypes()
+            if self._mode == "pywin32":
+                self._run_pywin32()
             else:
-                debug_print("[tray] tray disabled on non-Windows; skipping")
+                self._run_ctypes()
         finally:
             self._running = False
 
@@ -56,14 +59,11 @@ class Tray:
         WM_USER = 0x0400
         WM_TRAY = WM_USER + 1
         ID_TRAY_QUIT = 1001
-
-        class_name = "PixieTrayWin32"
-
+        cls = "PixieTrayWin32"
         def wndproc(hWnd, msg, wParam, lParam):
             if msg == win32con.WM_DESTROY:
-                nid = (hWnd, 1)
                 try:
-                    win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, nid)
+                    win32gui.Shell_NotifyIcon(win32gui.NIM_DELETE, (hWnd, 1))
                 except Exception:
                     pass
                 win32gui.PostQuitMessage(0)
@@ -76,54 +76,42 @@ class Tray:
                     debug_print(f"[tray] on_quit error: {e!r}")
                 return 0
             if msg == WM_TRAY and lParam == win32con.WM_RBUTTONUP:
-                menu = win32gui.CreatePopupMenu()
-                win32gui.AppendMenu(menu, win32con.MF_STRING, ID_TRAY_QUIT, "Quit")
+                m = win32gui.CreatePopupMenu()
+                win32gui.AppendMenu(m, win32con.MF_STRING, ID_TRAY_QUIT, "Quit")
                 x, y = win32gui.GetCursorPos()
                 win32gui.SetForegroundWindow(hWnd)
-                win32gui.TrackPopupMenu(menu, win32con.TPM_LEFTALIGN, x, y, 0, hWnd, None)
-                win32gui.DestroyMenu(menu)
+                win32gui.TrackPopupMenu(m, win32con.TPM_LEFTALIGN, x, y, 0, hWnd, None)
+                win32gui.DestroyMenu(m)
                 return 0
             return win32gui.DefWindowProc(hWnd, msg, wParam, lParam)
-
         wc = win32gui.WNDCLASS()
         wc.hInstance = win32api.GetModuleHandle(None)
-        wc.lpszClassName = class_name
-        wc.style = win32con.CS_VREDRAW | win32con.CS_HREDRAW
-        wc.hCursor = win32gui.LoadCursor(0, win32con.IDC_ARROW)
+        wc.lpszClassName = cls
         wc.lpfnWndProc = wndproc
         atom = win32gui.RegisterClass(wc)
-
-        hwnd = win32gui.CreateWindowEx(
-            win32con.WS_EX_TOOLWINDOW,
-            atom,
-            self.title,
-            win32con.WS_OVERLAPPED,
-            0, 0, 0, 0, 0, 0, wc.hInstance, None
-        )
+        hwnd = win32gui.CreateWindowEx(win32con.WS_EX_TOOLWINDOW, atom, self.title, win32con.WS_OVERLAPPED, 0,0,0,0, 0,0, wc.hInstance, None)
         self._hwnd = hwnd
-
         hicon = None
-        if self.icon_path and os.path.isfile(self.icon_path):
+        if self.icon_path and os.path.isfile(self.icon_path) and self.icon_path.lower().endswith(".ico"):
             try:
-                hicon = win32gui.LoadImage(
-                    0, self.icon_path, win32con.IMAGE_ICON, 0, 0,
-                    win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE
-                )
+                hicon = win32gui.LoadImage(0, self.icon_path, win32con.IMAGE_ICON, 0, 0, win32con.LR_LOADFROMFILE | win32con.LR_DEFAULTSIZE)
                 debug_print("[tray] pywin32: loaded .ico")
             except Exception as e:
                 debug_print(f"[tray] pywin32: LoadImage failed: {e!r}")
         if not hicon:
             hicon = win32gui.LoadIcon(0, win32con.IDI_APPLICATION)
             debug_print("[tray] pywin32: using default icon")
-
         flags = win32gui.NIF_ICON | win32gui.NIF_MESSAGE | win32gui.NIF_TIP
-        nid = (hwnd, 1, flags, WM_TRAY, hicon, self.title[:127])
+        nid = (hwnd, 1, flags, WM_TRAY, hicon, (self.title or "Pixie")[:127])
         try:
             win32gui.Shell_NotifyIcon(win32gui.NIM_ADD, nid)
+            try:
+                win32gui.Shell_NotifyIcon(win32gui.NIM_SETVERSION, (hwnd, 1, 4, 0, 0, 0, ""))  # NOTIFYICON_VERSION_4
+            except Exception:
+                pass
         except Exception as e:
             debug_print(f"[tray] pywin32: NIM_ADD failed: {e!r}")
             return
-
         try:
             win32gui.PumpMessages()
         finally:
@@ -140,7 +128,6 @@ class Tray:
         user32 = ctypes.windll.user32
         shell32 = ctypes.windll.shell32
         kernel32 = ctypes.windll.kernel32
-
         WM_DESTROY = 0x0002
         WM_COMMAND = 0x0111
         WM_USER = 0x0400
@@ -150,65 +137,28 @@ class Tray:
         NIF_ICON = 0x00000002
         NIF_TIP = 0x00000004
         NIM_ADD = 0x00000000
+        NIM_SETVERSION = 0x00000004
         NIM_DELETE = 0x00000002
+        NOTIFYICON_VERSION_4 = 4
         ID_TRAY_QUIT = 102
-
-        WNDPROCTYPE = ctypes.WINFUNCTYPE(
-            wintypes.LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
-        )
-
+        WNDPROCTYPE = ctypes.WINFUNCTYPE(wintypes.LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
         class WNDCLASS(ctypes.Structure):
-            _fields_ = [
-                ("style", wintypes.UINT),
-                ("lpfnWndProc", WNDPROCTYPE),
-                ("cbClsExtra", ctypes.c_int),
-                ("cbWndExtra", ctypes.c_int),
-                ("hInstance", wintypes.HINSTANCE),
-                ("hIcon", wintypes.HICON),
-                ("hCursor", wintypes.HCURSOR),
-                ("hbrBackground", wintypes.HBRUSH),
-                ("lpszMenuName", wintypes.LPCWSTR),
-                ("lpszClassName", wintypes.LPCWSTR),
-            ]
-
+            _fields_ = [("style", wintypes.UINT), ("lpfnWndProc", WNDPROCTYPE), ("cbClsExtra", ctypes.c_int), ("cbWndExtra", ctypes.c_int), ("hInstance", wintypes.HINSTANCE), ("hIcon", wintypes.HICON), ("hCursor", wintypes.HCURSOR), ("hbrBackground", wintypes.HBRUSH), ("lpszMenuName", wintypes.LPCWSTR), ("lpszClassName", wintypes.LPCWSTR)]
         class POINT(ctypes.Structure):
             _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
-
         class NOTIFYICONDATA(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.DWORD),
-                ("hWnd", wintypes.HWND),
-                ("uID", wintypes.UINT),
-                ("uFlags", wintypes.UINT),
-                ("uCallbackMessage", wintypes.UINT),
-                ("hIcon", wintypes.HICON),
-                ("szTip", wintypes.WCHAR * 128),
-                ("dwState", wintypes.DWORD),
-                ("dwStateMask", wintypes.DWORD),
-                ("szInfo", wintypes.WCHAR * 256),
-                ("uTimeoutOrVersion", wintypes.UINT),
-                ("szInfoTitle", wintypes.WCHAR * 64),
-                ("dwInfoFlags", wintypes.DWORD),
-                ("guidItem", ctypes.c_byte * 16),
-                ("hBalloonIcon", wintypes.HICON),
-            ]
-
-        def LOWORD(dword):
-            return dword & 0xFFFF
-
+            _fields_ = [("cbSize", wintypes.DWORD), ("hWnd", wintypes.HWND), ("uID", wintypes.UINT), ("uFlags", wintypes.UINT), ("uCallbackMessage", wintypes.UINT), ("hIcon", wintypes.HICON), ("szTip", wintypes.WCHAR * 128), ("dwState", wintypes.DWORD), ("dwStateMask", wintypes.DWORD), ("szInfo", wintypes.WCHAR * 256), ("uTimeoutOrVersion", wintypes.UINT), ("szInfoTitle", wintypes.WCHAR * 64), ("dwInfoFlags", wintypes.DWORD), ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", wintypes.HICON)]
+        def LOWORD(dword): return dword & 0xFFFF
         def _load_icon():
             if self.icon_path and os.path.isfile(self.icon_path) and self.icon_path.lower().endswith(".ico"):
-                hicon = user32.LoadImageW(
-                    0, self.icon_path, 1, 0, 0, 0x00000010 | 0x00008000
-                )
-                if hicon:
+                h = user32.LoadImageW(0, self.icon_path, 1, 0, 0, 0x00000010 | 0x00008000)
+                if h:
                     debug_print("[tray] ctypes: loaded .ico")
-                    return hicon
+                    return h
                 else:
                     debug_print(f"[tray] ctypes: LoadImageW failed err={kernel32.GetLastError()}")
             debug_print("[tray] ctypes: using default icon")
             return user32.LoadIconW(None, 32512)
-
         @WNDPROCTYPE
         def WndProc(hWnd, msg, wParam, lParam):
             if msg == WM_COMMAND and LOWORD(wParam) == ID_TRAY_QUIT:
@@ -236,7 +186,6 @@ class Tray:
                 user32.PostQuitMessage(0)
                 return 0
             return user32.DefWindowProcW(hWnd, msg, wParam, lParam)
-
         hInstance = kernel32.GetModuleHandleW(None)
         cls = WNDCLASS()
         cls.style = 0
@@ -251,22 +200,12 @@ class Tray:
         if not user32.RegisterClassW(ctypes.byref(cls)):
             err = kernel32.GetLastError()
             debug_print(f"[tray] ctypes: RegisterClassW failed err={err}")
-
-        hwnd = user32.CreateWindowExW(
-            0x00000080,
-            cls.lpszClassName,
-            self.title,
-            0x80000000,
-            0, 0, 0, 0,
-            None, None, hInstance, None
-        )
+        hwnd = user32.CreateWindowExW(0x00000080, cls.lpszClassName, self.title, 0x80000000, 0,0,0,0, None, None, hInstance, None)
         if not hwnd:
             debug_print(f"[tray] ctypes: CreateWindowExW failed err={kernel32.GetLastError()}")
             return
         self._hwnd = hwnd
-
         hicon = _load_icon()
-
         nid = NOTIFYICONDATA()
         nid.cbSize = ctypes.sizeof(NOTIFYICONDATA)
         nid.hWnd = hwnd
@@ -276,23 +215,25 @@ class Tray:
         nid.hIcon = hicon
         tip = (self.title or "Pixie")[:127]
         nid.szTip = tip
-
         ok = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
         if not ok:
             debug_print(f"[tray] ctypes: NIM_ADD failed err={kernel32.GetLastError()}")
             return
-
+        try:
+            nid.uTimeoutOrVersion = NOTIFYICON_VERSION_4
+            shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(nid))
+        except Exception:
+            pass
         msg = wintypes.MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
-
         try:
-            nid = NOTIFYICONDATA()
-            nid.cbSize = ctypes.sizeof(NOTIFYICONDATA)
-            nid.hWnd = hwnd
-            nid.uID = 1
-            shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
+            n2 = NOTIFYICONDATA()
+            n2.cbSize = ctypes.sizeof(NOTIFYICONDATA)
+            n2.hWnd = hwnd
+            n2.uID = 1
+            shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(n2))
         except Exception:
             pass
         try:
